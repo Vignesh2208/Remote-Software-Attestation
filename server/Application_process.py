@@ -1,0 +1,190 @@
+import sys
+import os
+import threading
+import time
+from threading import Timer
+
+from Crypto.PublicKey import RSA 
+from Crypto.Cipher import PKCS1_OAEP 
+from base64 import b64decode 
+from Crypto.Cipher import AES
+from Crypto import Random
+
+from Crypto.Hash import SHA256
+import socket
+import subprocess
+
+
+arg_list = sys.argv
+
+if len(arg_list) == 1 :
+	print "Not enough arguments. IP address is required to be set up"
+	sys.exit()
+else :
+	my_IP_address = str(arg_list[1])
+
+port = 29015
+
+
+class Server_thread(threading.Thread) :
+	def __init__(self,my_IP_address,port) :
+		threading.Thread.__init__(self)
+		self.my_IP_address = my_IP_address
+		self.port = port
+		self.address = (self.my_IP_address,self.port)
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+		print >>sys.stderr, 'Starting up server on %s at port %s' % self.address
+		self.sock.bind(self.address)
+		self.message_length_size = 32
+		self.message_length = 0
+		self.message_length_received = 0
+		self.message_body_received = 0
+		self.message_body = ""
+		self.message_type_size = 2
+		self.received_attestation_routine = 0
+		
+		
+		with open("Public_key.pem","r") as f :
+			key = f.read()
+		f.close()
+		self.rsapubkey = RSA.importKey(key)
+		
+
+	def run(self) :
+		self.sock.listen(1)
+
+		while True:
+			# Wait for a connection
+			print >>sys.stderr, 'Server : Waiting for a connection'
+			self.connection, self.client_address = self.sock.accept()
+			try:
+				print >>sys.stderr, 'Server : Connection established with ', self.client_address
+				self.message_length_received = 0
+				self.message_body_received = 0
+				self.message_body = ""
+				self.message_length = 0
+
+				# Receive the data in small chunks and retransmit it
+				while True:
+					if self.message_length_received == 0 :			
+						data = self.connection.recv(self.message_length_size)
+						self.message_length = int(data)
+						print "Server : Expecting a message of length",self.message_length
+						self.message_length_received = 1
+					elif self.message_body_received == 0 :
+						data = ""
+						while len(data) < self.message_length :
+							data += self.connection.recv(self.message_length)
+						#print >>sys.stderr, 'received "%s"' % data
+						if data:
+							#print >>sys.stderr, 'sending data back to the client'
+							print "Server : Received a message of the expected length. Verifying the signature"
+							
+							if self.message_length > 0 :
+								#time.sleep(5)
+								self.message_body = data
+								self.perform_attestation()						
+							
+							self.message_body_received = 1
+							break
+						else:
+							print >>sys.stderr, 'No data received from', self.client_address
+							break
+
+        				
+			finally:
+				# Clean up the connection
+				self.connection.close()
+	def perform_attestation(self) :
+		#print "Just Echoing the message back to the client after verification of signature"
+		self.payload_length = long(self.message_body[0:self.message_length_size])
+		self.signed_digest_length = long(self.message_body[self.message_length_size:2*self.message_length_size])
+		self.message_type = self.message_body[2*self.message_length_size:2*self.message_length_size + self.message_type_size]
+		self.payload = self.message_body[2*self.message_length_size + self.message_type_size :2*self.message_length_size+ self.message_type_size + self.payload_length]
+		self.signed_digest = long(self.message_body[2*self.message_length_size + self.payload_length + self.message_type_size:])
+
+		h = SHA256.new()
+		h.update(self.payload)
+		computed_message_digest = h.hexdigest()
+		input_tuple = (self.signed_digest,None)
+			
+		
+		
+		if self.rsapubkey.verify(computed_message_digest,input_tuple) == True :
+			print "Server : Signature Verification of the received message suceeded"
+
+			if self.message_type == '01' : # Attestation routine
+				self.received_attestation_routine = 1
+				with open('test.py','w') as f :
+					f.write(self.payload)
+				f.close()
+				print "Server : Received Attestation routine. Waiting for the input seed"
+				self.connection.sendall("ACK_SUCCESS")
+			elif self.message_type == '02' : #Input argument string received
+				if self.received_attestation_routine == 1 :
+					self.received_attestation_routine = 0
+					try :
+						print "Server : Received an input seed for the Received Attestation routine : ",self.payload
+						print "Server : Running the attestation routine now "
+						print ""
+						print ""
+						subprocess_call_list = [sys.executable, 'test.py']
+						arguments = self.payload.split()
+						counter = 0
+						while counter < len(arguments) :
+							subprocess_call_list.append(arguments[counter])
+							counter += 1
+						subprocess.call(subprocess_call_list)
+						os.remove('test.py')
+						print ""
+						print ""
+						print "Server : Attestation routine finished execution. Sending the computed result back "
+						computed_hash = "NULL"						
+						with open('/proc/Attest','r') as f :
+							computed_hash = f.read()
+						f.close()
+						#print "Computed hash = ", computed_hash.decode('hex')
+						#computed_hash = "1234"
+						
+						self.connection.sendall("ACK_SUCCESS::" + str(computed_hash)) # Send a positive ACK
+					except (RuntimeError, TypeError, NameError):
+						print "Server : Encountered error during the attestation routine execution. Sending a NACK"
+						self.connection.sendall("ACK_FAILURE::0")
+			else :
+				self.connection.sendall("ACK_SUCCESS")							
+				
+		else : 
+			print "Server : Signature Verification failed. Sending a NACK"
+			self.connection.sendall("ACK_FAILURE")
+
+	
+
+		
+	
+			
+class application_process_thread(threading.Thread) :
+	def __init__(self,params) :
+		self.params = params
+		threading.Thread.__init__(self)
+	def run(self) :
+	
+		print "Application_process_thread : Starting application"
+		self.perform_job()
+		while True :
+			pass			
+		
+					
+	def perform_job(self) :
+		print "Application_process_thread : Currently performing the job "
+
+
+params = 0
+application = application_process_thread(params)
+attestation_server = Server_thread(my_IP_address,port)
+application.start()
+attestation_server.start()		
+
+
+	
+
