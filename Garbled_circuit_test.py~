@@ -1,0 +1,10 @@
+import Garbled_cirtuits
+
+obj = circuit(2,2)
+obj.set_input_wire_assignments([[100,200],[300,400]])
+obj.set_output_wire_assignments([[500,600],[700,800]])
+obj.set_output_wire_mapping(0,[1,2])
+obj.set_output_wire_mapping(1,[0,3])
+obj.construct_output_wire_table(0)
+obj.construct_output_wire_table(1)
+obj.evaluate_circuit([100,300])

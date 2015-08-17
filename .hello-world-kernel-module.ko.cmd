@@ -1,0 +1,1 @@
+cmd_/home/user/Desktop/CS461_project/hello-world-kernel-module.ko := ld -r -m elf_i386 -T /usr/src/linux-headers-3.2.0-26-generic-pae/scripts/module-common.lds --build-id  -o /home/user/Desktop/CS461_project/hello-world-kernel-module.ko /home/user/Desktop/CS461_project/hello-world-kernel-module.o /home/user/Desktop/CS461_project/hello-world-kernel-module.mod.o
