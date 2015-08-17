@@ -1,0 +1,14 @@
+#include<stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <linux/unistd.h>
+#include <errno.h>
+
+
+void main()
+{
+pid_t parent_process_id;
+parent_process_id = getppid();
+printf("Hello world. Parent process id %d\n",parent_process_id);
+return;
+}
